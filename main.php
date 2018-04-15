@@ -56,7 +56,6 @@ class Main{
         $this ->item = json_decode($item,true);
         $this ->list = json_decode($list,true);
         $this ->count = 0;
-        $this ->get_data();
     }
     public function get_data(){
         $src = "./main/".date('Y-m-d',time()).'.txt';
@@ -93,6 +92,7 @@ class Main{
     }
     // 执行接口
     public function exec(){
+        $this ->get_data();
         foreach( $this ->arr as &$v ){
             $service_code = null;
             $division_code = null;
@@ -184,7 +184,7 @@ $app ->exec();
 
 while( true ){
     sleep(5);
-    if( date("H")==0 ){
+    if( date("H")==0&&date('i')==0 ){
         $app ->exec();
     }
 }
