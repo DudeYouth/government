@@ -49,12 +49,16 @@ function request($url,$param){
 class Main{
     function __construct(){
         $this ->arr = [];
+        $this ->cache = [];
         $this ->get_time_url = "http://thzwb.thnet.gov.cn/appointment/getlistServiceOrder.action";
+        $this ->get_data_url = "http://thzwb.thnet.gov.cn/queryDeptBespeakList.action";
+        $this ->get_record_url = "http://thzwb.thnet.gov.cn/getRecordCount.action";
         $this ->submit_url = "http://thzwb.thnet.gov.cn/appointment/getOrderServiceItem.action";
         $item = file_get_contents('./dist/ServiceItemSimple.json');
         $list = file_get_contents('./dist/DivisionList.json');
         $this ->item = json_decode($item,true);
         $this ->list = json_decode($list,true);
+        $this ->status = 0;
         $this ->count = 0;
     }
     public function get_data(){
@@ -96,43 +100,118 @@ class Main{
         foreach( $this ->arr as &$v ){
             $service_code = null;
             $division_code = null;
+            $type = 1;
+            $data = [];
             if( !empty($v) ){
+                $dep = trim($v[3]);
+                $op = trim($v[4]);
                 foreach( $this ->list as $l ){
-                    if( trim($l['divisionName'])==trim($v[3]) ){
+                    if( trim($l['divisionName'])==$dep ){
                         $division_code = $l['divisionCode'];
                         break;
                     }
                 }
                 foreach( $this ->item as $i ){
-                    if( trim($i['name'])==trim($v[4]) ){
+                    if( trim($i['name'])==$op ){
                         $service_code = $i['service_code'];
                         break;
                     }
                 }
-                // 获取预约的时间
-                if( !empty($service_code)&&!empty($division_code) ){
+                // 如果service_code不存在则采用特殊方式请求
+                if( empty($service_code) ){
+                    if( isset($this ->cache[$dep]) ){
+                        $data = $this ->cache[$dep];
+                    }else{
+                        $data = file_get_contents($this ->get_data_url."?deptName=".$dep);
+                        $data = json_decode($data,true);
+                        $this ->cache[$dep] = $data;
+                    }
+                    if( $rd = $this ->get_date($data,$v,$op) ){
+                        $service_code = $rd['service_code'];
+                        $t_data = $rd['date'];
+                        $type = 2;
+                    }
+                // 正常情况的处理方式
+                }else{
+                    $type = 1;
                     $t_data = $this ->get_time($division_code,$service_code);
-                    if( !empty($t_data) ){
+                }
+                if( !empty($t_data) ){
+                    // 正常的提交方式
+                    if( $type == 1 ){
+                        $res = $this ->submit($division_code,$service_code,$t_data,$v);
+                    }else{
+                        $res = $this ->_submit($division_code,$service_code,$t_data,$v);
+                    }
+                    if( $res["is_order"]=='Y' ){
+                        $this ->status = 1;
+                        $v[5] =  trim($t_data['apdate']).' '.trim($t_data['office_hour']);
+                        $this ->echo_file("success",$v);
+                    }else{
                         $res = $this ->submit($division_code,$service_code,$t_data,$v);
                         if( $res["is_order"]=='Y' ){
-                            $v[5] =  trim($t_data['apdate']).trim($t_data['office_hour']);
+                            $this ->status = 1;
                             $this ->echo_file("success",$v);
                         }else{
-                            $res = $this ->submit($division_code,$service_code,$t_data,$v);
-                            if( $res["is_order"]=='Y' ){
-                                $this ->echo_file("success",$v);
-                            }else{
-                                $this ->echo_file("fail",$v);
-                            }
+                            $this ->echo_file("fail",$v);
                         }
-                    }else{
-                        $this ->echo_file("fail",$v);
-                        $v = null;
                     }
+                }else{
+                    $this ->echo_file("fail",$v);
+                    $v = null;
                 }
             }
 
         }
+        if( $this ->status==1 ){
+            exit;
+        }
+    }
+    private function get_date($data,$v,$op){
+        if( isset($data['Biz']) ){
+            $t_data = [];
+            foreach( $data['Biz'] as $dv ){
+                if( trim($dv['BizName'])==$op ){
+                    $flag = true;
+                    for( $i=0;$i<30;$i++ ){
+                        $d = date('Y-m-d',strtotime('+'.$i.' day'));
+                        $record = [];
+                        // 如果获取记录失败，将不再获取记录
+                        if( $flag ){
+                            $record = file_get_contents($this ->get_record_url.'?BizId='.$dv['BizID'].'&date='.$d);
+                            $record = json_decode($record,true);
+                        }
+                        if( isset($record['Record']) ){
+                            if( isset($record['Record'][0]) ){
+                                if( isset($record['Record'][0]['TimeRecord']) ){
+                                    $time_record = $record['Record'][0]['TimeRecord'];
+                                    foreach( $dv['TimeConfig'] as $tc ){
+                                        foreach( $time_record as $tr ){
+                                            if( $tc['YYSTime']==$tr['Time'] ){
+                                                $arr = explode(":",$tr['Time']);
+                                                if( $d==date('Y-m-d')&&(int)date('H')>=(int)$arr[0]+1 ){
+                                                    break;
+                                                }
+                                                if( (int)$tc['YYMax']>(int)$tr['Count'] ){
+                                                    return  ['date'=>['apdate'=>$d,'office_hour'=>$tc['YYSTime']],'service_code'=>$dv['BizID']];
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        // 获取记录失败
+                        }else{
+                            $flag = false;  // 关闭开关，不再获取记录
+                            foreach( $dv['TimeConfig'] as $tc ){
+                                return  ['date'=>['apdate'=>$d,'office_hour'=>$tc['YYSTime']],'service_code'=>$dv['BizID']];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
     }
     // 获取预约时间表
     private function get_time($division_code,$service_code){
@@ -168,6 +247,20 @@ class Main{
             'time'=>$t_data['office_hour'],
         ]);
     }
+    // 特殊事项的提交预约
+    private function _submit($division_code,$service_code,$t_data,$v){
+        return request($this ->submit_url,[
+            'address'=>'天河北路894号（咨询电话：020-38470847）',
+            'addressMsg'=>3,
+            'certificate'=>$v[1],
+            'org_code'=>$division_code,
+            'phone'=>$v[2],
+            'predate'=>$t_data['apdate'],
+            'service_item_code'=>$service_code,
+            'service_item_name'=>$v['4'],
+            'time'=>$t_data['office_hour'],
+        ]);
+    }
     // 输出文件
     private function echo_file($type='fail',$data){
         if( $type=='fail' ){
@@ -183,8 +276,9 @@ $app = new Main();
 $app ->exec();
 
 while( true ){
-    sleep(5);
-    if( date("H")==0&&date('i')==0 ){
-        $app ->exec();
-    }
+    sleep(60);
+    // if( date("H")==0&&date('i')==0 ){
+    //     $app ->exec();
+    // }
+    $app ->exec();
 }
