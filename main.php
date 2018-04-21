@@ -144,13 +144,13 @@ class Main{
                         $res = $this ->_submit($division_code,$service_code,$t_data,$v);
                     }
                     if( $res["is_order"]=='Y' ){
-                        $this ->status = 1;
+                        // $this ->status = 1;
                         $v[5] =  trim($t_data['apdate']).' '.trim($t_data['office_hour']);
                         $this ->echo_file("success",$v);
                     }else{
                         $res = $this ->submit($division_code,$service_code,$t_data,$v);
                         if( $res["is_order"]=='Y' ){
-                            $this ->status = 1;
+                            // $this ->status = 1;
                             $this ->echo_file("success",$v);
                         }else{
                             $this ->echo_file("fail",$v);
@@ -163,9 +163,9 @@ class Main{
             }
 
         }
-        if( $this ->status==1 ){
-            exit;
-        }
+        // if( $this ->status==1 ){
+        //     exit;
+        // }
     }
     private function get_date($data,$v,$op){
         if( isset($data['Biz']) ){
@@ -174,7 +174,17 @@ class Main{
                 if( trim($dv['BizName'])==$op ){
                     $flag = true;
                     for( $i=0;$i<30;$i++ ){
-                        $d = date('Y-m-d',strtotime('+'.$i.' day'));
+                        $time = strtotime('+'.$i.' day');
+                        $week = date('w',$time);
+                        $day = date('d',$time);
+                        // 过滤周末
+                        if( $week==0||$week==6 ){
+                            continue;
+                        }
+                        if( $day==30||$day==1||$day=="01" ){
+                            continue;
+                        }
+                        $d = date('Y-m-d',$time);
                         $record = [];
                         // 如果获取记录失败，将不再获取记录
                         if( $flag ){
@@ -276,9 +286,8 @@ $app = new Main();
 $app ->exec();
 
 while( true ){
-    sleep(60);
-    // if( date("H")==0&&date('i')==0 ){
-    //     $app ->exec();
-    // }
-    $app ->exec();
+    sleep(3);
+    if( date("H")==0&&date('i')==0 ){
+        $app ->exec();
+    }
 }
